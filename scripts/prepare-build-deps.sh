@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-
+# macos依赖检查，如果AUTO_INSTALL_BUILD_DEPS变量设置为1，则自动安装缺失的依赖
 set -euo pipefail
 
 AUTO_INSTALL_BUILD_DEPS="${AUTO_INSTALL_BUILD_DEPS:-0}"

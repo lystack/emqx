@@ -1,4 +1,5 @@
 ifeq ($(DEBUG),1)
+# debug输出, info是makefile内置函数
 DEBUG_INFO = $(info $1)
 else
 DEBUG_INFO = @:
