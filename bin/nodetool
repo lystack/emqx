@@ -16,6 +16,8 @@ main(Args) ->
         {win32, nt} ->
             ok;
         _nix ->
+            %% 如果启动参数里有 start_epmd，就执行脚本
+            %% `epmd` (Erlang Port Mapper Daemon)是一个小型守护进程，它跟踪Erlang节点上的端口号，并允许Erlang节点相互通信。当你启动一个分布式Erlang系统的时候，`epmd` 会运行在后台来映射节点名到实际的系统端口号。这样不同机器上的 Erlang 进程就能找到并连接到对方
             case init:get_argument(start_epmd) of
                 {ok, [["true"]]} ->
                     ok = start_epmd();
@@ -26,6 +28,8 @@ main(Args) ->
     case Args of
         ["hocon" | Rest] ->
             ok = add_libs_dir(),
+            %% Rest: -s emqx_conf_schema -c /etc/emqx/emqx.conf multi_get [key1,key2]
+            %% 根据emqx_conf_schema.erl解析的,这里会定义一些校验规则，默认值
             %% forward the call to hocon_cli
             hocon_cli:main(Rest);
         ["check_license_key", Key0] ->
@@ -344,11 +348,16 @@ consult(Cont, Str, Acc) ->
     end.
 
 add_libs_dir() ->
+    %% /usr/lib/emqx
     [_ | _] = RootDir = os:getenv("RUNNER_ROOT_DIR"),
+    %% REL_VSN="5.6.1"
     CurrentVsn = os:getenv("REL_VSN"),
+    %% /usr/lib/emqx/releases/RELEASES
     RelFile = filename:join([RootDir, "releases", "RELEASES"]),
     case file:consult(RelFile) of
+        %% 文件内容是列表，列表里面只有一个元素
         {ok, [Releases]} ->
+            %% 查找元组中第三个元素为 5.6.1 的元组
             Release = lists:keyfind(CurrentVsn, 3, Releases),
             {release, _Name, _AppVsn, _ErtsVsn, Libs, _State} = Release,
             lists:foreach(
@@ -375,6 +384,7 @@ add_patches_dir(PatchesDir) ->
 
 add_lib_dir(RootDir, Name, Vsn) ->
     LibDir = filename:join([RootDir, lib, atom_to_list(Name) ++ "-" ++ Vsn, ebin]),
+    %% 添加到Erlang代码服务的应用程序加载路径的开头。这样做可以确保系统在查找模块时首先考虑这个路径下的beam文件。
     case code:add_patha(LibDir) of
         true ->
             %% load all applications into application controller, before performing

@@ -35,10 +35,31 @@ else
     RUNNER_ROOT_DIR="$(cd "$(dirname "$(realpath "$0" || echo "$0")")"/..; pwd -P)"
 fi
 
+######## emqx_vars ##########
+# REL_VSN="5.6.1"
+# ERTS_VSN="14.2.1"
+# ERL_OPTS=""
+# RUNNER_BIN_DIR="/usr/bin"
+# RUNNER_LIB_DIR="$RUNNER_ROOT_DIR/lib"
+# IS_ELIXIR="${IS_ELIXIR:-no}"
+# ## Allow users to pre-set `EMQX_LOG_DIR` because it only affects boot commands like `start` and `console`,
+# ## but not other commands such as `ping` and `ctl`.
+# ## RUNNER_LOG_DIR is kept for backward compatibility.
+# export EMQX_LOG_DIR="${EMQX_LOG_DIR:-${RUNNER_LOG_DIR:-/var/log/emqx}}"
+# EMQX_ETC_DIR="/etc/emqx"
+# RUNNER_USER="emqx"
+# SCHEMA_MOD="emqx_conf_schema"
+# IS_ENTERPRISE="no"
+# ## Do not change EMQX_DEFAULT_ERLANG_COOKIE.
+# ## Configure EMQX_NODE_COOKIE instead
+# EMQX_DEFAULT_ERLANG_COOKIE='emqxsecretcookie'
+# REL_NAME="emqx"
+# export EMQX_DESCRIPTION='EMQX'
+######## emqx_vars ##########
 # shellcheck disable=SC1090,SC1091
 . "$RUNNER_ROOT_DIR"/releases/emqx_vars
 
-# export 主要是为了在子进程使用
+# export 主要是为了在子进程使用，将变量导出为环境变量
 # defined in emqx_vars
 export RUNNER_ROOT_DIR
 export EMQX_ETC_DIR
@@ -47,6 +68,7 @@ export SCHEMA_MOD
 export IS_ENTERPRISE
 
 # 变量来自emqx_vars  结果为 /usr/bin/emqx
+# /usr/bin/emqx
 RUNNER_SCRIPT="$RUNNER_BIN_DIR/$REL_NAME"
 CODE_LOADING_MODE="${CODE_LOADING_MODE:-embedded}"
 
@@ -60,10 +82,13 @@ export HOCON_ENV_OVERRIDE_PREFIX='EMQX_'
 
 # erlang运行时系统 /usr/lib/emqx/erts-14.2.1
 export ERTS_DIR="$RUNNER_ROOT_DIR/erts-$ERTS_VSN"
+# /usr/lib/emqx/erts-14.2.1/bin
 export BINDIR="$ERTS_DIR/bin"
 export EMU="beam"
 export PROGNAME="erl"
+# /usr/lib/emqx/lib
 export ERTS_LIB_DIR="$RUNNER_ROOT_DIR/lib"
+# /usr/lib/emqx/dynlibs
 DYNLIBS_DIR="$RUNNER_ROOT_DIR/dynlibs"
 
 # $TERM表示终端类型，dumb是一种非常简单的终端，不支持颜色，格式化
@@ -245,9 +270,11 @@ usage() {
     esac
 }
 
+# 获取脚本的第一个参数
 COMMAND="${1:-}"
 GREP='grep --color=never'
 
+# 输出help
 if [ -z "$COMMAND" ]; then
     usage 'help'
     exit 1
@@ -256,6 +283,7 @@ elif [ "$COMMAND" = 'help' ]; then
     exit 0
 fi
 
+# 输出命令的help文档  emqx start help
 if [ "${2:-}" = 'help' ]; then
     ## 'ctl' command has its own usage info
     if [ "$COMMAND" != 'ctl' ]; then
@@ -266,10 +294,12 @@ fi
 
 ## IS_BOOT_COMMAND is set for later to inspect node name and cookie from hocon config (or env variable)
 case "${COMMAND}" in
+    # 这几个是启动命令
     start|console|console_clean|foreground|check_config)
         IS_BOOT_COMMAND='yes'
         ;;
     ertspath)
+        # 输出erlang运行时路径
         echo "$ERTS_DIR"
         exit 0
         ;;
@@ -284,6 +314,7 @@ esac
 
 ## backward compatible
 if [ -d "$ERTS_DIR/lib" ]; then
+    # 第一次出现 LD_LIBRARY_PATH
     export LD_LIBRARY_PATH="$ERTS_DIR/lib:$LD_LIBRARY_PATH"
 fi
 
@@ -291,32 +322,38 @@ fi
 check_user() {
     # Validate that the user running the script is the owner of the
     # RUN_DIR.
+    # $URNNER_USER=emqx
     if [ "$RUNNER_USER" ] && [ "x$WHOAMI" != "x$RUNNER_USER" ]; then
         if [ "x$WHOAMI" != "xroot" ]; then
             echo "You need to be root or use sudo to run this command"
             exit 1
         fi
+        # DEBUG=1 /usr/bin/emqx args
         CMD="DEBUG=$DEBUG \"$RUNNER_SCRIPT\" "
         for ARG in "$@"; do
             CMD="${CMD} \"$ARG\""
         done
         # This will drop privileges into the runner user
         # It exec's in a new shell and the current shell will exit
+        # 切换到emqx用户，再执行CMD
         exec su - "$RUNNER_USER" -c "$CMD"
     fi
 }
 
 # Make sure the user running this script is the owner and/or su to that user
 check_user "$@"
+# check_user不返回0就退出
 ES=$?
 if [ "$ES" -ne 0 ]; then
     exit $ES
 fi
 
 # Make sure log directory exists
+# /var/log/emqx
 mkdir -p "$EMQX_LOG_DIR"
 
 # turn off debug as this is static
+# 关闭debug
 set +x
 COMPATIBILITY_CHECK='
     io:format("BEAM_OK~n", []),
@@ -340,11 +377,13 @@ COMPATIBILITY_CHECK='
     end,
     halt(0).
 '
+# 如果开启了debug，再设置为开启
 [ "$DEBUG" -eq 1 ] && set -x
 
 compatiblity_info() {
   # RELEASE_LIB is used by Elixir
   # set crash-dump bytes to zero to ensure no crash dump is generated when erl crashes
+  # /usr/lib/emqx/erts-14.2.1/bin/erl -noshell -boot "/usr/lib/emqx/release/5.6.1/start_clean" -boot_var RELEASE_LIB "/usr/lib/emqx/lib" -eval 
   env ERL_CRASH_DUMP_BYTES=0 "$BINDIR/$PROGNAME" \
     -noshell \
     -boot "$REL_DIR/start_clean" \
@@ -355,6 +394,15 @@ compatiblity_info() {
 # Collect Erlang/OTP runtime sanity and compatibility in one go
 maybe_use_portable_dynlibs() {
     # Read BUILD_INFO early as the next commands may mess up the shell
+    # /usr/lib/emqx/releases/5.6.1/BUILD_INFO
+    ##########################################
+    # arch: "x86_64-pc-linux-gnu"
+    # wordsize: 64
+    # os: "debian12"
+    # erlang: "26.2.1-2"
+    # elixir: "none"
+    # relform: "deb"
+    ##########################################
     BUILD_INFO="$(cat "${REL_DIR}/BUILD_INFO")"
     COMPATIBILITY_INFO="$(compatiblity_info 2>/dev/null || true)"
     if ! (echo -e "$COMPATIBILITY_INFO" | $GREP -q 'CRYPTO_OK'); then
@@ -489,22 +537,29 @@ fi
 # Turn off debug as the ps output can be quite noisy
 set +x
 
+# 将find_emqx_process函数的输出赋值给PS_LINE
+# -root /usr/lib/emqx -bindir /usr/lib/emqx/erts-14.2.1/bin -progname /usr/bin/emqx -- -home /var/lib/emqx -- -enable-feature maybe_expr -noshell -noshell -noinput -boot /usr/lib/emqx/releases/5.6.1/start -boot_var RELEASE_LIB /usr/lib/emqx/lib -boot_var ERTS_LIB_DIR /usr/lib/emqx/lib -mode embedded -config /var/lib/emqx/configs/app.2024.11.17.22.32.15.config -stdlib restricted_shell emqx_restricted_shell -shutdown_time 30000 -pa /var/lib/emqx/patches -mnesia dump_log_write_threshold 5000 -mnesia dump_log_time_threshold 60000 -os_mon start_disksup false -pa /usr/lib/emqx/releases/5.6.1/consolidated -kernel prevent_overlapping_partitions false -kernel net_ticktime 120 -setcookie emqxsecretcookie -name emqx@127.0.0.1 -mnesia dir "/var/lib/emqx/mnesia/emqx@127.0.0.1" -- -start_epmd false -epmd_module ekka_epmd -proto_dist ekka -- foreground -ekka_proto_dist inet_tcp -emqx_data_dir /var/lib/emqx --
 PS_LINE="$(find_emqx_process)"
 logdebug "PS_LINE=$PS_LINE"
+# sed 删除空行，统计有多少个emqx在运行
 RUNNING_NODES_COUNT="$(echo -e "$PS_LINE" | sed '/^\s*$/d' | wc -l)"
 [ "$RUNNING_NODES_COUNT" -gt 1 ] && logdebug "More than one running node found: count=$RUNNING_NODES_COUNT"
 
 if [ "$IS_BOOT_COMMAND" = 'yes' ]; then
     if [ "$RUNNING_NODES_COUNT" -gt 0 ] && [ "$COMMAND" != 'check_config' ]; then
+        # emqx@127.0.0.1
         running_node_name=$(echo -e "$PS_LINE" | $GREP -oE "\s-s?name.*" | awk '{print $2}' || true)
+        # 默认情况下，此时还没有设置EMQX_NODE__NAME
         if [ -n "$running_node_name" ] && [ "$running_node_name" = "${EMQX_NODE__NAME:-}" ]; then
             echo "Node ${running_node_name} is already running!"
             exit 1
         fi
     fi
+    # /etc/emqx/emqx.conf
     [ -f "$EMQX_ETC_DIR"/emqx.conf ] || die "emqx.conf is not found in $EMQX_ETC_DIR" 1
     maybe_use_portable_dynlibs
     if [ "${EMQX_BOOT_CONFIGS:-}" = '' ]; then
+        # schema_mod=emqx_conf_schema
         EMQX_BOOT_CONFIGS="$(call_hocon -s "$SCHEMA_MOD" -c "$EMQX_ETC_DIR"/emqx.conf multi_get "${CONF_KEYS[@]}")"
         ## export here so the 'console' command recursively called from
         ## 'start' command does not have to parse the configs again
@@ -562,6 +617,14 @@ else
         EMQX_BOOT_CONFIGS="$(call_hocon -s "$SCHEMA_MOD" -c "$EMQX_ETC_DIR"/emqx.conf multi_get "${CONF_KEYS[@]}")"
     fi
 fi
+#################
+# node.data_dir="/var/lib/emqx"
+# node.name="emqx@127.0.0.1"
+# node.cookie="emqxsecretcookie"
+# node.db_backend=rlog
+# cluster.proto_dist=inet_tcp
+# node.dist_net_ticktime=120
+################
 logdebug "EMQX_BOOT_CONFIGS: $EMQX_BOOT_CONFIGS"
 [ "$DEBUG" -eq 1 ] && set -x
 
@@ -571,7 +634,9 @@ get_boot_config() {
 }
 
 EPMD_ARGS="-start_epmd false -epmd_module ekka_epmd -proto_dist ekka"
+# inet_tcp
 PROTO_DIST="$(get_boot_config 'cluster.proto_dist' || true)"
+# 120
 TICKTIME="$(get_boot_config 'node.dist_net_ticktime' || echo '120')"
 # this environment variable is required by ekka_dist module
 # because proto_dist is overriden to ekka, and there is a lack of ekka_tls module
@@ -598,13 +663,17 @@ if [ "$EKKA_PROTO_DIST_MOD" = 'inet_tls' ] || [ "$EKKA_PROTO_DIST_MOD" = 'inet6_
     EPMD_ARGS="${EPMD_ARGS} -ssl_dist_optfile $SSL_DIST_OPTFILE"
 fi
 
+# /var/lib/emqx
 DATA_DIR="$(get_boot_config 'node.data_dir')"
 # ensure no trailing /
+# 删除末尾的斜杠
+# /var/lib/emqx
 DATA_DIR="${DATA_DIR%/}"
 if [[ $DATA_DIR != /* ]]; then
     # relative path
     DATA_DIR="${RUNNER_ROOT_DIR}/${DATA_DIR}"
 fi
+# /var/lib/emqx/configs
 CONFIGS_DIR="$DATA_DIR/configs"
 mkdir -p "$CONFIGS_DIR"
 
@@ -877,7 +946,9 @@ wait_until_return_val() {
     local RESULT
     local WAIT_TIME
     local CMD
+    # true
     RESULT="$1"
+    # 120
     WAIT_TIME="$2"
     shift 2
     CMD="$*"
@@ -952,12 +1023,14 @@ maybe_warn_ulimit() {
 ## 2. override with environment variable EMQX_NODE__NAME
 ## Node name is either short-name (without '@'), e.g. 'emqx'
 ## or long name (with '@') e.g. 'emqx@example.net' or 'emqx@127.0.0.1'
+# 如果环境变量没有定义node name，就从配置文件读取
 NAME="${EMQX_NODE__NAME:-}"
 if [ -z "$NAME" ]; then
     NAME="$(get_boot_config 'node.name')"
 fi
 
 # force to use 'emqx' short name
+# 长度为0，则name为emqx
 [ -z "$NAME" ] && NAME='emqx'
 
 case "$NAME" in
@@ -977,6 +1050,7 @@ fi
 # e.g. the 'ps' command output
 export ESCRIPT_NAME="$SHORT_NAME"
 
+# /var/lib/emqx/emqx_erl_pipes/emqx@127.0.0.1
 PIPE_DIR="${PIPE_DIR:-/$DATA_DIR/${WHOAMI}_erl_pipes/$NAME/}"
 
 ## Resolve Erlang cookie.
@@ -986,10 +1060,15 @@ if [ -n "${EMQX_NODE_COOKIE:-}" ]; then
     unset EMQX_NODE_COOKIE
 fi
 COOKIE="${EMQX_NODE__COOKIE:-}"
+# 从配置文件读 node.cookie="emqxsecretcookie"
 COOKIE_IN_USE="$(get_boot_config 'node.cookie')"
+
+# 如果配置文件和环境变量都配置了cookie，当两个值不相等，则报错
 if [ "$IS_BOOT_COMMAND" != 'yes' ] && [ -n "$COOKIE_IN_USE" ] && [ -n "$COOKIE" ] && [ "$COOKIE" != "$COOKIE_IN_USE" ]; then
     die "EMQX_NODE__COOKIE is different from the cookie used by $NAME"
 fi
+
+# 环境变量 > /etc/emqx/emqx.conf > emqx_vars
 [ -z "$COOKIE" ] && COOKIE="$COOKIE_IN_USE"
 [ -z "$COOKIE" ] && COOKIE="$EMQX_DEFAULT_ERLANG_COOKIE"
 
@@ -1069,7 +1148,9 @@ cd "$RUNNER_ROOT_DIR"
 
 case "${COMMAND}" in
     start)
+        # 文件描述符小于1024，输出warn日志
         maybe_warn_ulimit
+        # 使用了默认cookie，输出warn日志
         maybe_warn_default_cookie
 
         # this flag passes down to console mode
@@ -1090,6 +1171,7 @@ case "${COMMAND}" in
         [ "$RUN_PARAM" ] && set -- "$@" "$RUN_PARAM"
 
         # Export the HEART_COMMAND
+        # /usr/bin/emqx start
         HEART_COMMAND="$RUNNER_SCRIPT $COMMAND"
         export HEART_COMMAND
 
@@ -1102,12 +1184,14 @@ case "${COMMAND}" in
 
         mkdir -p "$PIPE_DIR"
 
+        # /usr/lib/emqx/erts-14.2.1/bin/run_erl -daemon "/var/lib/emqx/emqx_erl_pipes/emqx@127.0.0.1" "/var/log/emqx" "exec /usr/bin/emqx console"
         "$BINDIR/run_erl" -daemon "$PIPE_DIR" "$EMQX_LOG_DIR" \
                           "$(relx_start_command)"
 
         WAIT_TIME=${EMQX_WAIT_FOR_START:-120}
         if wait_until_return_val "true" "$WAIT_TIME" 'relx_nodetool' \
                 'eval' 'emqx:is_running()'; then
+            # EMQX 5.6.1 is started successfully!
             echo "$EMQX_DESCRIPTION $REL_VSN is started successfully!"
             exit 0
         else
